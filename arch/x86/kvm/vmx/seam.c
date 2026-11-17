@@ -675,9 +675,12 @@ int handle_seamcall(struct kvm_vcpu *vcpu)
     u16 svi;
 
     struct page *vmcs_page = alloc_page(GFP_KERNEL);
-    // TODO: handle if alloc_page failed
 
-    void *vmcs = page_address(vmcs_page);
+    void *vmcs;
+
+    if (!vmcs_page)
+        return -ENOMEM;
+    vmcs = page_address(vmcs_page);
 
     kvm_emulate_msr_read(vcpu, MSR_EFER, &efer);
     vmx_get_segment(vcpu, &cs, VCPU_SREG_CS);
@@ -689,10 +692,12 @@ int handle_seamcall(struct kvm_vcpu *vcpu)
     
     if (!vmx->nested.vmxon || vmx->seam_mode || (!(efer & EFER_LMA) || !cs.l)) {
         kvm_queue_exception(vcpu, UD_VECTOR);
+        free_page((unsigned long)vmcs);
         return 1;
     } else if (is_guest_mode(vcpu)) {
         // TODO: set "VM exit from VMX root operation" 0
         nested_vmx_vmexit(vcpu, EXIT_REASON_SEAMCALL, 0, 0);
+        free_page((unsigned long)vmcs);
         return 1;
     } else if (vmx_get_cpl(vcpu) > 0 || kvm_vmx->seamrr.enabled == 0) {
 // TODO: events blocking by MOV-SS
@@ -707,22 +712,27 @@ int handle_seamcall(struct kvm_vcpu *vcpu)
 #define INVOKE_PSEAMLDR (1ULL << 63)
     if (rax & INVOKE_PSEAMLDR) {
         if (!mutex_trylock(&kvm_vmx->p_seamldr_lock)) {
+            free_page((unsigned long)vmcs);
             return vmx_fail_invalid(vcpu);
         } else if (vmx->in_pseamldr) {
             mutex_unlock(&kvm_vmx->p_seamldr_lock);
             // TODO: What happens if in_pseamldr already set
             goto exit;
-        } else if (false) {
-// TODO: Check P_SEAMLDR is loaded and enabled
-            return vmx_fail_invalid(vcpu);
         }
         seam_cvp = kvm_vmx->seamrr.base + kvm_vmx->seamrr.size - P_SEAMLDR_RANGE_SIZE + PAGE_SIZE;
-        vmx->in_pseamldr = true;
     } else {
 // TODO: Check TDX Module is loaded
         if (!kvm_vmx->seam_extend.seam_ready) {
+            free_page((unsigned long)vmcs);
             return vmx_fail_invalid(vcpu);
         }
+    }
+
+    if (kvm_read_guest_page(vcpu->kvm, gpa_to_gfn(seam_cvp), vmcs, 0, PAGE_SIZE)) {
+        if (rax & INVOKE_PSEAMLDR)
+            mutex_unlock(&kvm_vmx->p_seamldr_lock);
+        free_page((unsigned long)vmcs);
+        return -EFAULT;
     }
 
     rflags = vmx_get_rflags(vcpu);
@@ -734,16 +744,22 @@ int handle_seamcall(struct kvm_vcpu *vcpu)
         printk(KERN_WARNING "%s: do not support current-VMCS on SEAMCALL\n", 
                __func__);
 
-    // TODO: nested.current_vmptr should be released here
-    vmx->seam_mode = true;
-    vmx->seam_vmptr = seam_cvp;
-
-    kvm_read_guest_page(vcpu->kvm, gpa_to_gfn(vmx->seam_vmptr), vmcs, 0, PAGE_SIZE);
-
 // TODO: Save event inhibits in VMM interruptability status
 // TODO: Inhibit SMI and NMI
     save_exit_info(vcpu, (u8 *) vmcs);
     save_guest_state(vcpu, (u8 *) vmcs);
+    if (kvm_write_guest_page(vcpu->kvm, gpa_to_gfn(seam_cvp), vmcs, 0, PAGE_SIZE)) {
+        vmx_set_rflags(vcpu, rflags);
+        if (rax & INVOKE_PSEAMLDR)
+            mutex_unlock(&kvm_vmx->p_seamldr_lock);
+        free_page((unsigned long)vmcs);
+        return -EFAULT;
+    }
+
+    // TODO: nested.current_vmptr should be released here
+    vmx->seam_mode = true;
+    vmx->seam_vmptr = seam_cvp;
+    vmx->in_pseamldr = !!(rax & INVOKE_PSEAMLDR);
     load_host_state(vcpu, (u8 *) vmcs);
 
     down_read(&vcpu->kvm->arch.apicv_update_lock);
@@ -767,8 +783,6 @@ int handle_seamcall(struct kvm_vcpu *vcpu)
     preempt_enable();
     up_read(&vcpu->kvm->arch.apicv_update_lock);
 
-    kvm_write_guest_page(vcpu->kvm, gpa_to_gfn(vmx->seam_vmptr), vmcs, 0, PAGE_SIZE);
-
 exit:
     free_page((unsigned long) vmcs);
 
@@ -785,7 +799,11 @@ int handle_seamret(struct kvm_vcpu *vcpu)
 
     struct page *vmcs_page = alloc_page(GFP_KERNEL);
 
-    void *vmcs = page_address(vmcs_page);
+    void *vmcs;
+
+    if (!vmcs_page)
+        return -ENOMEM;
+    vmcs = page_address(vmcs_page);
 
     kvm_emulate_msr_read(vcpu, MSR_EFER, &efer);
     vmx_get_segment(vcpu, &cs, VCPU_SREG_CS);
@@ -801,7 +819,10 @@ int handle_seamret(struct kvm_vcpu *vcpu)
     }
     // TODO: Check current vmptr (i.e., vmx->seam_vmptr) is valid? Can it be invalid?
 
-    kvm_read_guest_page(vcpu->kvm, gpa_to_gfn(vmx->seam_vmptr), vmcs, 0, PAGE_SIZE);
+    if (kvm_read_guest_page(vcpu->kvm, gpa_to_gfn(vmx->seam_vmptr), vmcs, 0, PAGE_SIZE)) {
+        free_page((unsigned long)vmcs);
+        return -EFAULT;
+    }
 
     if (check_entry_info(vcpu, vmcs)) {
         // TODO: Check settings of VMX controls and host-state area
