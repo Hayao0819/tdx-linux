@@ -40,6 +40,8 @@ struct kvm_tdx {
 	bool tsx_supported;
 
 	u64 tsc_offset;
+	u64 tsc_multiplier;
+	u32 tsc_khz;
 
 	struct tdx_td td;
 

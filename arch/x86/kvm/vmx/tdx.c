@@ -716,8 +716,6 @@ int tdx_vcpu_create(struct kvm_vcpu *vcpu)
 	vcpu->arch.cr0_guest_owned_bits = -1ul;
 	vcpu->arch.cr4_guest_owned_bits = -1ul;
 
-	vcpu->arch.tsc_offset = kvm_tdx->tsc_offset;
-	vcpu->arch.l1_tsc_offset = vcpu->arch.tsc_offset;
 	/*
 	 * TODO: support off-TD debug.  If TD DEBUG is enabled, guest state
 	 * can be accessed. guest_state_protected = false. and kvm ioctl to
@@ -2819,6 +2817,8 @@ static int tdx_td_init(struct kvm *kvm, struct kvm_tdx_cmd *cmd)
 		goto out;
 
 	kvm_tdx->tsc_offset = td_tdcs_exec_read64(kvm_tdx, TD_TDCS_EXEC_TSC_OFFSET);
+	kvm_tdx->tsc_multiplier = td_tdcs_exec_read64(kvm_tdx, TD_TDCS_EXEC_TSC_MULTIPLIER);
+	kvm_tdx->tsc_khz = td_params->tsc_frequency * 25000;
 	kvm_tdx->attributes = td_params->attributes;
 	kvm_tdx->xfam = td_params->xfam;
 
@@ -3120,6 +3120,7 @@ EXPORT_SYMBOL_GPL(tdx_vcpu_get_regs);
 
 static int tdx_vcpu_init(struct kvm_vcpu *vcpu, struct kvm_tdx_cmd *cmd)
 {
+	struct kvm_tdx *kvm_tdx = to_kvm_tdx(vcpu->kvm);
 	u64 apic_base;
 	struct vcpu_tdx *tdx = to_tdx(vcpu);
 	int ret;
@@ -3147,6 +3148,12 @@ static int tdx_vcpu_init(struct kvm_vcpu *vcpu, struct kvm_tdx_cmd *cmd)
 	td_vmcs_write16(tdx, POSTED_INTR_NV, POSTED_INTR_VECTOR);
 	td_vmcs_write64(tdx, POSTED_INTR_DESC_ADDR, __pa(&tdx->pi_desc));
 	td_vmcs_setbit32(tdx, PIN_BASED_VM_EXEC_CONTROL, PIN_BASED_POSTED_INTR);
+
+	vcpu->arch.tsc_offset = kvm_tdx->tsc_offset;
+	vcpu->arch.l1_tsc_offset = vcpu->arch.tsc_offset;
+	vcpu->arch.tsc_scaling_ratio = kvm_tdx->tsc_multiplier;
+	vcpu->arch.l1_tsc_scaling_ratio = kvm_tdx->tsc_multiplier;
+	vcpu->arch.virtual_tsc_khz = kvm_tdx->tsc_khz;
 
 	tdx->state = VCPU_TD_STATE_INITIALIZED;
 	return 0;
