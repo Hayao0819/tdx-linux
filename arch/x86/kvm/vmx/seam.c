@@ -28,17 +28,20 @@ inline bool is_seam_mode(struct kvm_vcpu *vcpu)
     return !!to_vmx(vcpu)->seam_mode;
 }
 
-void mcheck(struct kvm_vcpu *vcpu, gpa_t gpa)
+int mcheck(struct kvm_vcpu *vcpu, gpa_t gpa, u64 size)
 {
     struct kvm_vmx *kvm_vmx = to_kvm_vmx(vcpu->kvm);
     struct sys_info_table sys_info_table = { 0, };
     u32 eax = 0x1, ebx, ecx, edx;
-    int i;
+    int i, ret;
 
     struct page *seaminfo_page = alloc_page(GFP_KERNEL);
-    // TODO: handle if alloc_page failed
 
-    void *seaminfo = page_address(seaminfo_page);
+    void *seaminfo;
+
+    if (!seaminfo_page)
+        return 1;
+    seaminfo = page_address(seaminfo_page);
 
     sys_info_table.version = 0;
     sys_info_table.tot_num_lps = vcpu->kvm->created_vcpus;
@@ -53,7 +56,7 @@ void mcheck(struct kvm_vcpu *vcpu, gpa_t gpa)
         }
     }
 
-    sys_info_table.p_seamldr_range.base = kvm_vmx->seamrr.base + kvm_vmx->seamrr.size - P_SEAMLDR_RANGE_SIZE;
+    sys_info_table.p_seamldr_range.base = kvm_vmx->seamrr.base + size - P_SEAMLDR_RANGE_SIZE;
     sys_info_table.p_seamldr_range.size = P_SEAMLDR_RANGE_SIZE;
 
     sys_info_table.smrr2_not_supported = 1;
@@ -68,12 +71,16 @@ void mcheck(struct kvm_vcpu *vcpu, gpa_t gpa)
         sys_info_table.cmr[i].size = 0;
     }
 
-    kvm_read_guest_page(vcpu->kvm, gpa_to_gfn(gpa), seaminfo, 0, PAGE_SIZE);
+    ret = kvm_read_guest_page(vcpu->kvm, gpa_to_gfn(gpa), seaminfo, 0, PAGE_SIZE);
+    if (ret)
+        goto out;
     memset(seaminfo, 0, PAGE_SIZE / 2);
     memcpy(seaminfo, &sys_info_table, sizeof(sys_info_table));
-    kvm_write_guest_page(vcpu->kvm, gpa_to_gfn(gpa), seaminfo, 0, PAGE_SIZE);
+    ret = kvm_write_guest_page(vcpu->kvm, gpa_to_gfn(gpa), seaminfo, 0, PAGE_SIZE);
 
+out:
     free_page((unsigned long) seaminfo);
+    return !!ret;
 }
 
 

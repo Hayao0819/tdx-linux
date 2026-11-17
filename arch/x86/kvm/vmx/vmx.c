@@ -2630,18 +2630,24 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		kvm_vmx->seamrr.base = data & SEAMRR_BASE_BITS_MASK(cpuid_maxphyaddr(vcpu));
 		kvm_vmx->seamrr.configured = (data & SEAMRR_BASE_CONFIGURED) >> SEAMRR_BASE_CONFIGURE_OFFSET;
 		break;
-	case MSR_IA32_SEAMRR_PHYS_MASK:
+	case MSR_IA32_SEAMRR_PHYS_MASK: {
+		u64 size = data & SEAMRR_MASK_BITS_MASK(cpuid_maxphyaddr(vcpu));
+
 		if (!open_tdx || kvm_vmx->seamrr.locked)
 			return 1;
 		if (data & ~(SEAMRR_MASK_BITS_MASK(cpuid_maxphyaddr(vcpu)) | SEAMRR_MASK_LOCKED | SEAMRR_MASK_ENABLED))
 			return 1;
-		kvm_vmx->seamrr.size = data & SEAMRR_MASK_BITS_MASK(cpuid_maxphyaddr(vcpu));
+		if ((data & SEAMRR_MASK_ENABLED) &&
+		    (size < P_SEAMLDR_RANGE_SIZE ||
+		     size > BIT_ULL(cpuid_maxphyaddr(vcpu)) - kvm_vmx->seamrr.base ||
+		     mcheck(vcpu, kvm_vmx->seamrr.base + size - PAGE_SIZE, size)))
+			return 1;
+		kvm_vmx->seamrr.size = size;
 		// TODO: when is SEAMRR_PHYS_MASK locked? Is it manually set?
 		kvm_vmx->seamrr.locked = (data & SEAMRR_MASK_LOCKED) >> SEAMRR_MASK_LOCK_OFFSET;
 		kvm_vmx->seamrr.enabled = (data & SEAMRR_MASK_ENABLED) >> SEAMRR_MASK_ENABLE_OFFSET;
-		if (kvm_vmx->seamrr.enabled)
-			mcheck(vcpu, kvm_vmx->seamrr.base + kvm_vmx->seamrr.size - PAGE_SIZE);
 		break;
+	}
 	case MSR_IA32_SEAMEXTEND:
 		if (!open_tdx)
 			return 1;
