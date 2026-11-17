@@ -1708,6 +1708,10 @@ static int skip_emulated_instruction(struct kvm_vcpu *vcpu)
 	if (!static_cpu_has(X86_FEATURE_HYPERVISOR) ||
 	    exit_reason.basic != EXIT_REASON_EPT_MISCONFIG) {
 		instr_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+		if (open_tdx && exit_reason.basic == EXIT_REASON_EXCEPTION_NMI &&
+		    is_invalid_opcode(vmx_get_intr_info(vcpu)) &&
+		    is_from_seamcall(vcpu))
+			instr_len = 4;
 
 		/*
 		 * Emulating an enclave's instructions isn't supported as KVM

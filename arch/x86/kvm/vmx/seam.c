@@ -1140,6 +1140,17 @@ err:
     }
 }
 
+bool is_from_seamcall(struct kvm_vcpu *vcpu)
+{
+    static const char bytecode[] = { __SEAMCALL_BYTECODE };
+    char inst[sizeof(bytecode)];
+    struct x86_exception e;
+
+    return !kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu), inst,
+                               sizeof(inst), &e) &&
+           !memcmp(inst, bytecode, sizeof(bytecode));
+}
+
 __init int seam_vmx_hardware_setup(int (*exit_handler[])(struct kvm_vcpu *))
 {
     vmx_instruction_handlers.vmptrld = exit_handler[EXIT_REASON_VMPTRLD];
