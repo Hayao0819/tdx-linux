@@ -2651,7 +2651,7 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_IA32_SEAMEXTEND:
 		if (!open_tdx)
 			return 1;
-		handle_seamextend(vcpu);
+		ret = handle_seamextend(vcpu, data);
 		break;
 	case MSR_IA32_MKTME_KEYID_PARTITIONING:
 		return 1;
