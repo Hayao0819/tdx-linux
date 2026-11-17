@@ -4594,6 +4594,9 @@ static void prepare_vmcs12(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 
 		vmcs12->vm_exit_intr_info = exit_intr_info;
 		vmcs12->vm_exit_instruction_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+		if (open_tdx && to_vmx(vcpu)->seam_mode &&
+		    vm_exit_reason == EXIT_REASON_TDCALL)
+			vmcs12->vm_exit_instruction_len = 4;
 		vmcs12->vmx_instruction_info = vmcs_read32(VMX_INSTRUCTION_INFO);
 
 		/*
